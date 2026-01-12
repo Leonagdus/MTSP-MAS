@@ -1,1 +1,1 @@
-http://AGH.myguest.virtualbox.org:7778/acc
+http://grano-Modern-15-A11M:7778/acc

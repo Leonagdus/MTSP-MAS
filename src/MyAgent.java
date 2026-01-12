@@ -98,6 +98,8 @@ public class MyAgent extends Agent {
 		// B. Listener for "Move Command" (If I win, I need to know)
 		addBehaviour(new MoveCommandListenerBehaviour());
 
+		addBehaviour(new VisitedListener());
+
 		// C. Agent 0 kicks off the very first round
 		if (this.myId == 0) {
 			// Wait a small moment for everyone to initialize, then start
@@ -353,7 +355,18 @@ public class MyAgent extends Agent {
 
 	// 4. Listen for broadcasts about visited nodes (to keep lists in sync)
 	private class VisitedListener extends CyclicBehaviour { // Add this in setup if you want full sync
+		@Override
 		public void action() {
-			/* ... */ }
+			MessageTemplate mt = MessageTemplate.MatchPerformative(ACLMessage.INFORM);
+			ACLMessage msg = myAgent.receive(mt);
+
+			if(msg != null){
+				int targetNode = Integer.parseInt(msg.getContent());
+				unvisitedNodes.remove(Integer.valueOf(targetNode));
+			}
+			else{
+				block();
+			}
+			}
 	}
 }
