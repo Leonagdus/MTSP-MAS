@@ -29,88 +29,90 @@ public class MyAgent extends Agent {
 	private Graph<Integer, DefaultWeightedEdge> graph;
 	private int currentLocation;
 	private List<Integer> unvisitedNodes; // "Points available for delivering"
+	private double totalDist = 0;
 
 	@Override
 	protected void setup() {
-		// 1. ARGUMENT PARSING
-		// Expecting: [0]: Graph File (ignored for now, creating dummy), [1]: Start
-		// Node, [2]: Total Agents
-		Object[] args = getArguments();
+        Object[] args = getArguments();
+        
+        // Default fallbacks
+        long seed = 0;
+        int numNodes = 5;
+        this.totalAgents = 1;
+        this.currentLocation = 0;
 
-		// Default values for testing if args are missing
-		int startNode = 0;
-		this.totalAgents = 3;
+        // 1. Parse Arguments from Launcher
+        if (args != null && args.length >= 4) {
+            seed = Long.parseLong((String) args[0]);
+            numNodes = Integer.parseInt((String) args[1]);
+            this.totalAgents = Integer.parseInt((String) args[2]);
+            this.currentLocation = Integer.parseInt((String) args[3]);
+        }
 
-		if (args != null && args.length >= 2) {
-			try {
-				// In a real scenario, load graph from file in args[0]
-				startNode = Integer.parseInt((String) args[1]);
-				if (args.length > 2)
-					this.totalAgents = Integer.parseInt((String) args[2]);
-			} catch (NumberFormatException e) {
-				System.err.println("Invalid arguments. Usage: GraphFile StartNode TotalAgents");
-			}
-		}
+        // 2. Generate the Random Graph (Same for everyone due to seed)
+        this.graph = generateRandomGraph(numNodes, seed);
+        
+        // 3. Initialize Unvisited List (All nodes initially)
+        this.unvisitedNodes = new ArrayList<>(this.graph.vertexSet());
 
-		this.currentLocation = startNode;
-		this.graph = createGraph(); // Helper to build graph (Replace with file loader)
+        // 4. Parse ID (e.g., Salesman-0 -> 0)
+        String localName = getAID().getLocalName();
+        this.myId = Integer.parseInt(localName.substring(localName.lastIndexOf("-") + 1));
+        
+        // 5. Identify Next Agent (Ring Topology)
+        int nextId = (this.myId + 1) % totalAgents;
+        this.nextAgentAID = new AID("Salesman-" + nextId, AID.ISLOCALNAME);
 
-		// Initialize unvisited nodes (All nodes except the ones agents start at?
-		// For simplicity, let's say nodes 1-5 are delivery points).
-		this.unvisitedNodes = new ArrayList<>();
-		for (Integer v : graph.vertexSet()) {
-			// Assume all nodes are delivery points for this example
-			this.unvisitedNodes.add(v);
-		}
+        // 6. Register & Print Info
+        registerService();
+        System.out.println("Agent " + localName + " initialized at Node " + currentLocation + ". Map size: " + numNodes);
 
-		// 2. ID AND NEIGHBOR DISCOVERY
-		String localName = getAID().getLocalName();
-		// Assumes name format "Salesman-0", "Salesman-1"
-		try {
-			this.myId = Integer.parseInt(localName.substring(localName.lastIndexOf("-") + 1));
-		} catch (Exception e) {
-			this.myId = 0; // Fallback
-		}
-
-		// Calculate next agent in the ring (0 -> 1 -> ... -> N -> 0)
-		int nextId = (this.myId + 1) % totalAgents;
-		this.nextAgentAID = new AID("Salesman-" + nextId, AID.ISLOCALNAME);
-
-		// 3. SERVICE REGISTRATION
-		DFAgentDescription dfad = new DFAgentDescription();
-		dfad.setName(getAID());
-		ServiceDescription sd = new ServiceDescription();
-		sd.setType("travelling-salesman");
-		sd.setName("mtsp-agent");
-		dfad.addServices(sd);
-		try {
-			DFService.register(this, dfad);
-		} catch (FIPAException ex) {
-			ex.printStackTrace();
-		}
-
-		System.out.println("Agent " + localName + " ready at Node " + currentLocation);
-
-		// 4. BEHAVIORS
-		// A. Listener for Token (Comparison logic)
-		addBehaviour(new TokenRingListenerBehaviour());
-
-		// B. Listener for "Move Command" (If I win, I need to know)
-		addBehaviour(new MoveCommandListenerBehaviour());
-
+        // 7. Behaviors
+        addBehaviour(new TokenRingListenerBehaviour());
+        addBehaviour(new MoveCommandListenerBehaviour());
 		addBehaviour(new VisitedListener());
 
-		// C. Agent 0 kicks off the very first round
-		if (this.myId == 0) {
-			// Wait a small moment for everyone to initialize, then start
-			addBehaviour(new WakerBehaviour(this, 3000) {
-				protected void onWake() {
-					System.out.println("--- STARTING SIMULATION ---");
-					startNewRound();
-				}
-			});
-		}
-	}
+        // Agent 0 starts the process after a brief delay
+        if (this.myId == 0) {
+            addBehaviour(new WakerBehaviour(this, 2000) {
+                protected void onWake() {
+                    System.out.println("--- SIMULATION START ---");
+                    startNewRound();
+                }
+            });
+        }
+    }
+
+	// --- RANDOM GRAPH GENERATION ---
+    private Graph<Integer, DefaultWeightedEdge> generateRandomGraph(int numNodes, long seed) {
+        Graph<Integer, DefaultWeightedEdge> g = new SimpleWeightedGraph<>(DefaultWeightedEdge.class);
+        Random r = new Random(seed);
+
+        // Create Vertices
+        for (int i = 0; i < numNodes; i++) g.addVertex(i);
+
+        // Create Complete Graph with Random Weights (Ensures connectivity)
+        // Source: [cite: 4] - "weighted edge... expressed as an integer"
+        for (int i = 0; i < numNodes; i++) {
+            for (int j = i + 1; j < numNodes; j++) {
+                DefaultWeightedEdge e = g.addEdge(i, j);
+                // Random weight between 10 and 100
+                double weight = 10 + r.nextInt(90); 
+                g.setEdgeWeight(e, weight);
+            }
+        }
+        return g;
+    }
+
+	private void registerService() {
+        DFAgentDescription dfad = new DFAgentDescription();
+        dfad.setName(getAID());
+        ServiceDescription sd = new ServiceDescription();
+        sd.setType("travelling-salesman");
+        sd.setName("mtsp-agent");
+        dfad.addServices(sd);
+        try { DFService.register(this, dfad); } catch (FIPAException ex) { ex.printStackTrace(); }
+    }
 
 	@Override
 	protected void takeDown() {
@@ -128,6 +130,7 @@ public class MyAgent extends Agent {
 	public void startNewRound() {
 		if (unvisitedNodes.isEmpty()) {
 			System.out.println("FINISHED: All nodes visited!");
+			System.out.println("Total distance travelled: " + totalDist);
 			return;
 		}
 
@@ -296,6 +299,7 @@ public class MyAgent extends Agent {
 			ACLMessage msg = myAgent.receive(mt);
 
 			if (msg != null) {
+
 				int targetNode = Integer.parseInt(msg.getContent());
 
 				// 1. Move
@@ -362,6 +366,7 @@ public class MyAgent extends Agent {
 
 			if(msg != null){
 				int targetNode = Integer.parseInt(msg.getContent());
+
 				unvisitedNodes.remove(Integer.valueOf(targetNode));
 			}
 			else{

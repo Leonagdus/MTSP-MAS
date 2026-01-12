@@ -1,4 +1,4 @@
-<project name="JadeLab2" default="run" basedir=".">
+<project name="src" default="run" basedir=".">
   <property name="src" location="src"/>
   <property name="build" location="build"/>
 
@@ -23,13 +23,18 @@
     <delete dir="${dist}"/>
   </target>
 
-  <target name="run" description="create agents">
-    <java fork="true" classname="jade.Boot">
-      <classpath>
-        <path refid="project.classpath"/> <pathelement location="${build}"/> </classpath>
-      
-      <arg value="-gui" />
-      <arg value="salesman-0:src.MyAgent(graph.xml,0,3);salesman-1:src.MyAgent(graph.xml,1,3);salesman-2:src.MyAgent(graph.xml,2,3)" />
-    </java>
-  </target>
+  <target name="run" description="Run the MTSP Simulation">
+      <property name="agents" value="3"/>
+      <property name="nodes" value="10"/>
+
+      <java fork="true" classname="src.LaunchMTSP">
+        <classpath>
+          <path refid="project.classpath"/> 
+          <pathelement location="${build}"/>
+        </classpath>
+        
+        <arg value="${agents}"/>
+        <arg value="${nodes}"/>
+      </java>
+    </target>
 </project>
