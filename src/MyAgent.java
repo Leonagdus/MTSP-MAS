@@ -22,26 +22,37 @@ import java.util.*;
 
 public class MyAgent extends Agent {
 
-	// --- AGENT STATE ---
+	//Global Variables (IDs, graph, lists, metrics)
 	private int myId;
-	private int totalAgents; // Needed to know who "Last Agent" is or to wrap around
+	private int totalAgents;
 	private AID nextAgentAID;
 	private Graph<Integer, DefaultWeightedEdge> graph;
 	private int currentLocation;
-	private List<Integer> unvisitedNodes; // "Points available for delivering"
+	private List<Integer> unvisitedNodes; // Available nodes for reaching
 	private double totalDist = 0;
-
+	//Using the Inform ACL Message we inform every agent about the removed node or the current location
+	private void broadcastVisit(int node) {
+		ACLMessage info = new ACLMessage(ACLMessage.INFORM);
+		for (int i = 0; i < totalAgents; i++) {
+			if (i != myId)
+				info.addReceiver(new AID("Salesman-" + i, AID.ISLOCALNAME));
+		}
+		info.setContent(String.valueOf(node));
+		info.setConversationId("node-visited");
+		send(info);
+	}
 	@Override
 	protected void setup() {
+		//Recieve the arguments from the current agent
         Object[] args = getArguments();
         
-        // Default fallbacks
+        //Initialize variables with default values
         long seed = 0;
         int numNodes = 5;
         this.totalAgents = 1;
         this.currentLocation = 0;
 
-        // 1. Parse Arguments from Launcher
+        //We parse the arguments passed to the agent and assign them to the agent's instance variables
         if (args != null && args.length >= 4) {
             seed = Long.parseLong((String) args[0]);
             numNodes = Integer.parseInt((String) args[1]);
@@ -49,61 +60,77 @@ public class MyAgent extends Agent {
             this.currentLocation = Integer.parseInt((String) args[3]);
         }
 
-        // 2. Generate the Random Graph (Same for everyone due to seed)
+        //Generation of the Random Weighted Graph
         this.graph = generateRandomGraph(numNodes, seed);
         
-        // 3. Initialize Unvisited List (All nodes initially)
+        //Initialization of the unvisitedNodes list 
         this.unvisitedNodes = new ArrayList<>(this.graph.vertexSet());
+		//Starting point considered already visited
+        if (unvisitedNodes.contains(currentLocation)) {
+            unvisitedNodes.remove(Integer.valueOf(currentLocation));
+        }
 
-        // 4. Parse ID (e.g., Salesman-0 -> 0)
+        //Retrieve of current Agent's name & id
         String localName = getAID().getLocalName();
         this.myId = Integer.parseInt(localName.substring(localName.lastIndexOf("-") + 1));
         
-        // 5. Identify Next Agent (Ring Topology)
+        //For the purpose od the ring topology (token circulation) we retrieve the next Agent's AID
         int nextId = (this.myId + 1) % totalAgents;
         this.nextAgentAID = new AID("Salesman-" + nextId, AID.ISLOCALNAME);
 
-        // 6. Register & Print Info
+        //Register & Print Info
         registerService();
         System.out.println("Agent " + localName + " initialized at Node " + currentLocation + ". Map size: " + numNodes);
 
-        // 7. Behaviors
+        //Behaviors
         addBehaviour(new TokenRingListenerBehaviour());
         addBehaviour(new MoveCommandListenerBehaviour());
 		addBehaviour(new VisitedListener());
-
-        // Agent 0 starts the process after a brief delay
+		addBehaviour(new StatsResponderBehaviour());
+		//Broadcast the nodes that have been used for starting points + delay
+		addBehaviour(new WakerBehaviour(this, 1000) {
+			protected void onWake() {
+				if (unvisitedNodes.contains(currentLocation)) {
+					unvisitedNodes.remove(Integer.valueOf(currentLocation));
+				}
+				broadcastVisit(currentLocation);
+			}
+		});
+        //Agent 0 starts the process after a brief delay
         if (this.myId == 0) {
             addBehaviour(new WakerBehaviour(this, 2000) {
                 protected void onWake() {
                     System.out.println("--- SIMULATION START ---");
+					//Start the new round
                     startNewRound();
                 }
             });
         }
     }
 
-	// --- RANDOM GRAPH GENERATION ---
+	//Random Graph Generation Function G=(V-int,WE:DefaultWeightedEdge) 
     private Graph<Integer, DefaultWeightedEdge> generateRandomGraph(int numNodes, long seed) {
         Graph<Integer, DefaultWeightedEdge> g = new SimpleWeightedGraph<>(DefaultWeightedEdge.class);
-        Random r = new Random(seed);
+        //For the random edge weights
+		Random r = new Random(seed);
 
-        // Create Vertices
-        for (int i = 0; i < numNodes; i++) g.addVertex(i);
+        //Creation of Vertices
+        for (int i = 0; i < numNodes; i++) 
+			g.addVertex(i);
 
-        // Create Complete Graph with Random Weights (Ensures connectivity)
-        // Source: [cite: 4] - "weighted edge... expressed as an integer"
-        for (int i = 0; i < numNodes; i++) {
+        //Creation of the Complete Graph with Random Weights for connectivity
+        //Comparison of current and next node
+		for (int i = 0; i < numNodes; i++) {
             for (int j = i + 1; j < numNodes; j++) {
                 DefaultWeightedEdge e = g.addEdge(i, j);
-                // Random weight between 10 and 100
+                //Random weight between 10 and 100
                 double weight = 10 + r.nextInt(90); 
                 g.setEdgeWeight(e, weight);
             }
         }
         return g;
     }
-
+	//Registration of the MTSP-Agent service
 	private void registerService() {
         DFAgentDescription dfad = new DFAgentDescription();
         dfad.setName(getAID());
@@ -111,7 +138,12 @@ public class MyAgent extends Agent {
         sd.setType("travelling-salesman");
         sd.setName("mtsp-agent");
         dfad.addServices(sd);
-        try { DFService.register(this, dfad); } catch (FIPAException ex) { ex.printStackTrace(); }
+        try {
+			 DFService.register(this, dfad); 
+			} 
+			catch (FIPAException ex) {
+				 ex.printStackTrace(); 
+			}
     }
 
 	@Override
@@ -122,15 +154,17 @@ public class MyAgent extends Agent {
 		}
 	}
 
-	// --- HELPER METHODS ---
-
-	/**
-	 * Called by the "Leader" of the round to create a fresh token and send it.
-	 */
+	//Helper Methods
+	/*The startNewRound() function is called by the "leader" agent who 
+	announces the minimum distance and starts a new round with a token 
+	containing his weights
+	*/
 	public void startNewRound() {
 		if (unvisitedNodes.isEmpty()) {
 			System.out.println("FINISHED: All nodes visited!");
-			System.out.println("Total distance travelled: " + totalDist);
+			System.out.println(getLocalName() + " Personal Total: " + totalDist);
+			//To keep the total distance for every agent we created the behaviour class StatsCollectorBehaviour
+			addBehaviour(new StatsCollectorBehaviour());
 			return;
 		}
 
@@ -139,46 +173,52 @@ public class MyAgent extends Agent {
 		MovementProposal proposal = new MovementProposal();
 		proposal.roundLeaderId = this.myId;
 
-		// Initialize the vector with MY distances
+		//Initialize the vector with the current agent distances
 		calculateAndFillProposals(proposal);
 
-		// Send to next agent
+		//Send the token to next agent
 		sendToken(proposal);
 	}
 
-	/**
-	 * Calculates distances from current location to all unvisited nodes
-	 * and updates the proposal if I am closer.
-	 */
+	/*The function calculateAndFillProposals() calculates distances from 
+	current location to all unvisited nodes
+	and updates the proposal .*/
 	private void calculateAndFillProposals(MovementProposal proposal) {
+		//To calculate the minimum distance we use the Dijkstra Algorithm
 		DijkstraShortestPath<Integer, DefaultWeightedEdge> dijkstra = new DijkstraShortestPath<>(graph);
 
 		for (Integer target : unvisitedNodes) {
-			// Calculate distance
+			//Calculating distance
 			double dist = Double.MAX_VALUE;
 			try {
+				//The path between the current node and the unvisited target
 				var path = dijkstra.getPath(currentLocation, target);
 				if (path != null)
+				//Recieves weight of the path
 					dist = path.getWeight();
+				//Source=Target
 				else if (currentLocation == target)
 					dist = 0;
 			} catch (IllegalArgumentException e) {
-			} // Target unreachable
+				// Target unreachable
+			}
 
-			// Check if I am better than what's in the token
+			//Comparisson of the proposals and check for the best proposal so far
 			MovementProposal.Offer currentBest = proposal.bestOffers.get(target);
 
 			if (currentBest == null || dist < currentBest.distance) {
-				// I am the best so far!
+				//Best Proposal
 				proposal.bestOffers.put(target, new MovementProposal.Offer(this.myId, dist));
 			}
 		}
 	}
-
+	// Sends the Proposal/Token
 	private void sendToken(MovementProposal proposal) {
 		ACLMessage msg = new ACLMessage(ACLMessage.PROPOSE);
+		//Send the token to the next Agent
 		msg.addReceiver(nextAgentAID);
 		try {
+			//Fill the message with the proposal's content & send it
 			msg.setContentObject(proposal);
 			send(msg);
 		} catch (IOException e) {
@@ -186,20 +226,21 @@ public class MyAgent extends Agent {
 		}
 	}
 
+	/* For debugging purposes
+	//Hardcoded graph for testing 
 	private Graph<Integer, DefaultWeightedEdge> createGraph() {
-		// Hardcoded graph for testing (matches Guidelines req to be simple)
 		Graph<Integer, DefaultWeightedEdge> g = new SimpleWeightedGraph<>(DefaultWeightedEdge.class);
-		// Add vertices 0 to 5
+		//We add vertices from 0 to 5
 		for (int i = 0; i <= 5; i++)
 			g.addVertex(i);
 
-		// Add edges with weights
+		//We add edges with random picked weights
 		addEdge(g, 0, 1, 10);
 		addEdge(g, 1, 2, 10);
 		addEdge(g, 2, 3, 10);
 		addEdge(g, 3, 4, 10);
-		addEdge(g, 4, 0, 50); // Loop back
-		addEdge(g, 0, 5, 100); // Far away node
+		addEdge(g, 4, 0, 50);
+		addEdge(g, 0, 5, 100);
 		return g;
 	}
 
@@ -207,19 +248,21 @@ public class MyAgent extends Agent {
 		DefaultWeightedEdge e = g.addEdge(v1, v2);
 		g.setEdgeWeight(e, weight);
 	}
+	*/
 
-	// --- INNER CLASSES (BEHAVIORS & DATA) ---
-
-	// 1. The Data Object (Vector of Distances)
+	//Behaviour Classes
+	//The MovementProposal class represents the shared proposal object exchanged between agents.
+	//It stores the current round leader and the best movement offers (distance proposals) for each node.
 	public static class MovementProposal implements Serializable {
-		public int roundLeaderId; // Who started this round?
-		// Map: NodeID -> Best Offer found so far
+		// Leader Agent ID
+		public int roundLeaderId;
+		//Map: NodeID -> Best Offer found so far
 		public HashMap<Integer, Offer> bestOffers = new HashMap<>();
 
 		public static class Offer implements Serializable {
 			public int agentId;
 			public double distance;
-
+			//Creation of the proposal content
 			public Offer(int agentId, double distance) {
 				this.agentId = agentId;
 				this.distance = distance;
@@ -232,23 +275,26 @@ public class MyAgent extends Agent {
 		}
 	}
 
-	// 2. Token Ring Behavior
-	// Receives the vector, updates it, passes it on OR decides winner.
+	//Token Ring Behavior
+	//It receives the vector, updates it, passes it on or decides the winner agent.
 	private class TokenRingListenerBehaviour extends CyclicBehaviour {
 		@Override
 		public void action() {
+			//Proposal for the Message Template
 			MessageTemplate mt = MessageTemplate.MatchPerformative(ACLMessage.PROPOSE);
+			//It recieves the proposal
 			ACLMessage msg = myAgent.receive(mt);
 
 			if (msg != null) {
 				try {
+					//Retrieves the content of the proposal
 					MovementProposal proposal = (MovementProposal) msg.getContentObject();
 
 					if (proposal.roundLeaderId == myId) {
-						// A. THE TOKEN HAS RETURNED TO LEADER -> ROUND COMPLETE
+						//That means that the token finished the loop and it's returned to the "leader" agent
 						handleRoundCompletion(proposal);
 					} else {
-						// B. I AM JUST A NODE IN THE CHAIN -> UPDATE AND PASS
+						//Intermediete Node | Update proposal content and pass the token to the next Agent
 						calculateAndFillProposals(proposal);
 						sendToken(proposal);
 					}
@@ -260,13 +306,13 @@ public class MyAgent extends Agent {
 				block();
 			}
 		}
-
+		//One of the proposals has been accepted | The winner agent makes the move to the unvisited node.
 		private void handleRoundCompletion(MovementProposal proposal) {
-			// Find the absolute best move among all offers
+			//Find the absolute best move among all offers
 			int bestNode = -1;
 			int winningAgent = -1;
 			double minTotalDist = Double.MAX_VALUE;
-
+			//For every entry in the HashMap we compare based on the minimum total distance and find the winner agent
 			for (Map.Entry<Integer, MovementProposal.Offer> entry : proposal.bestOffers.entrySet()) {
 				if (entry.getValue().distance < minTotalDist) {
 					minTotalDist = entry.getValue().distance;
@@ -274,15 +320,16 @@ public class MyAgent extends Agent {
 					winningAgent = entry.getValue().agentId;
 				}
 			}
-
+			//Print the winner agent
 			if (bestNode != -1) {
 				System.out.println(">>> DECISION: Agent " + winningAgent + " will move to Node " + bestNode + " (Dist: "
 						+ minTotalDist + ")");
 
-				// Instruct the winner to move
+				//Instruct the winner to move
 				ACLMessage cmd = new ACLMessage(ACLMessage.ACCEPT_PROPOSAL);
 				cmd.addReceiver(new AID("Salesman-" + winningAgent, AID.ISLOCALNAME));
-				cmd.setContent(String.valueOf(bestNode)); // Simple content: Target Node ID
+				//Simple content: Target Node ID + minTotalDist
+				cmd.setContent(bestNode + "," + minTotalDist);
 				send(cmd);
 			} else {
 				System.out.println("No reachable nodes left.");
@@ -290,8 +337,8 @@ public class MyAgent extends Agent {
 		}
 	}
 
-	// 3. Move Execution Behavior
-	// Listens for "ACCEPT_PROPOSAL" which means "You won the bid, move now"
+	//Move Execution Behavior
+	//Listens for "ACCEPT_PROPOSAL" which means "You won the bid, move now"
 	private class MoveCommandListenerBehaviour extends CyclicBehaviour {
 		@Override
 		public void action() {
@@ -299,42 +346,23 @@ public class MyAgent extends Agent {
 			ACLMessage msg = myAgent.receive(mt);
 
 			if (msg != null) {
-
-				int targetNode = Integer.parseInt(msg.getContent());
-
-				// 1. Move
+				//Retrieve the targets node prop content and cost of distance
+				String content = msg.getContent();
+        		String[] parts = content.split(",");
+				int targetNode = Integer.parseInt(parts[0]);
+        		double moveCost = Double.parseDouble(parts[1]);
+				//Update of accumulated distance
+				totalDist += moveCost;
+				//Agent moves to the target node and considers the target node as his new current node
 				System.out.println(getLocalName() + " MOVING: " + currentLocation + " -> " + targetNode);
 				currentLocation = targetNode;
-
-				// 2. Remove from unvisited list (Global knowledge simulation)
-				// In a pure MAS, we should broadcast "I visited X", but for this algo:
-				// The winner starts the next round, so he updates his list first.
-				// Note: Other agents need to know this node is visited.
-				// We should technically broadcast a "VISITED" message, but to keep strictly to
-				// the requested algorithm: "Now he repeats the same strategy..."
-				// We will just update our local list and rely on the next token circulation
-				// to inform others (or we assume shared memory for the list in this sim).
-
-				// FOR SIMPLICITY/ROBUSTNESS: We broadcast the update via the next Token.
-				// But actually, we need to remove it from *everyone's* list?
-				// The prompt says: "Last agent... sends message... control is in hands of
-				// moving Agent."
-				// "He's going to remove the Node... and recalculate."
-
-				// Let's assume the Token carries the "Visited List" or we blindly remove it
-				// here.
+				// The specific node has been visited, so we remove it from the unvisitedNodes list
 				unvisitedNodes.remove(Integer.valueOf(targetNode));
-
-				// 3. Broadcast removal (Quick hack: send INFORM to everyone or just carry on)
-				// Ideally, send an INFORM to all agents "I visited X".
-				// Here, I will just trigger the next round immediately.
-				// The token naturally filters out visited nodes if we update the list.
-				// *Crucial*: In a real dist-system, others need to know to remove X.
-				// I will add a small broadcast here for correctness.
+				// We broadcast the removal to all the agents, so each agent can have the exact same snapshot of the map each round
 				broadcastVisit(targetNode);
 
-				// 4. Start next round
-				// Wait small delay for broadcast to arrive
+				//Start the next round
+				//Wait small delay for broadcast to arrive
 				myAgent.addBehaviour(new WakerBehaviour(myAgent, 1000) {
 					protected void onWake() {
 						startNewRound();
@@ -345,25 +373,19 @@ public class MyAgent extends Agent {
 				block();
 			}
 		}
-
-		private void broadcastVisit(int node) {
-			ACLMessage info = new ACLMessage(ACLMessage.INFORM);
-			for (int i = 0; i < totalAgents; i++) {
-				if (i != myId)
-					info.addReceiver(new AID("Salesman-" + i, AID.ISLOCALNAME));
-			}
-			info.setContent(String.valueOf(node));
-			send(info);
-		}
 	}
 
-	// 4. Listen for broadcasts about visited nodes (to keep lists in sync)
-	private class VisitedListener extends CyclicBehaviour { // Add this in setup if you want full sync
+	//Listen for broadcasts about visited nodes (to keep lists in sync)
+	private class VisitedListener extends CyclicBehaviour {
 		@Override
 		public void action() {
-			MessageTemplate mt = MessageTemplate.MatchPerformative(ACLMessage.INFORM);
+			//Recieve the Informal message
+			MessageTemplate mt = MessageTemplate.and(
+            MessageTemplate.MatchPerformative(ACLMessage.INFORM),
+            MessageTemplate.MatchConversationId("node-visited")
+        	);
 			ACLMessage msg = myAgent.receive(mt);
-
+			//Each agent recieves the content of the target node and removes it from the list
 			if(msg != null){
 				int targetNode = Integer.parseInt(msg.getContent());
 
@@ -374,4 +396,70 @@ public class MyAgent extends Agent {
 			}
 			}
 	}
+	//Each Agent recieves the request to share their total distance
+	private class StatsResponderBehaviour extends CyclicBehaviour {
+		@Override
+		public void action() {
+			MessageTemplate mt = MessageTemplate.MatchPerformative(ACLMessage.REQUEST);
+			ACLMessage msg = myAgent.receive(mt);
+
+			if (msg != null) {
+				// Received a request for stats
+				ACLMessage reply = msg.createReply();
+				reply.setPerformative(ACLMessage.INFORM);
+				reply.setContent(String.valueOf(totalDist)); // Send my local total distance
+				send(reply);
+			} else {
+				block();
+			}
+		}
+	}
+	//Status Report for the total distance of all agents
+	private class StatsCollectorBehaviour extends Behaviour {
+		private int repliesReceived = 0;
+		//Set the current agent's total distance
+		private double globalTotalDist = totalDist; 
+		private int expectedReplies = totalAgents - 1;
+
+		@Override
+		public void onStart() {
+			//We send REQUEST to all the other agents
+			ACLMessage request = new ACLMessage(ACLMessage.REQUEST);
+			for (int i = 0; i < totalAgents; i++) {
+				if (i != myId) {
+					request.addReceiver(new AID("Salesman-" + i, AID.ISLOCALNAME));
+				}
+			}
+			send(request);
+			System.out.println("Collecting results from other agents...");
+		}
+		//We recieve the total distances of each agent via INFORM Replies and we add them to a global value
+		@Override
+		public void action() {
+			MessageTemplate mt = MessageTemplate.MatchPerformative(ACLMessage.INFORM);
+			ACLMessage msg = myAgent.receive(mt);
+
+			if (msg != null) {
+				double agentDist = Double.parseDouble(msg.getContent());
+				globalTotalDist += agentDist;
+				repliesReceived++;
+			} else {
+				block();
+			}
+		}
+
+		@Override
+		public boolean done() {
+			return repliesReceived >= expectedReplies;
+		}
+
+		@Override
+		public int onEnd() {
+			System.out.println("------------------------------------------");
+			System.out.println(">>> SIMULATION FINISHED <<<");
+			System.out.println("Minimum Overall Distance Achieved (Global Optimization): " + globalTotalDist);
+			System.out.println("------------------------------------------");
+			return super.onEnd();
+		}
+}
 }
