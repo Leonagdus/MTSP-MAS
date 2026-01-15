@@ -9,38 +9,37 @@ import java.util.Random;
 
 public class LaunchMTSP {
     public static void main(String[] args) {
-        // Default values
+        //Firstly, we set the number of nodes and agents for the MTSP problem
         int numAgents = 3;
         int numNodes = 10;
 
-        // 1. Parse Command Line Arguments
-        // Usage: java jadelab2.LaunchMTSP <num_agents> <num_nodes>
+        //Parse Arguments via cmd
+        //Usage: java LaunchMTSP <num_agents> <num_nodes>
         if (args.length >= 2) {
             numAgents = Integer.parseInt(args[0]);
             numNodes = Integer.parseInt(args[1]);
         }
-
         System.out.println(">>> LAUNCHING MTSP SIMULATION");
         System.out.println(">>> Agents: " + numAgents);
         System.out.println(">>> Nodes:  " + numNodes);
 
-        // 2. Generate a common seed so all agents build the SAME map
+        //We generate a common seed so all agents build the same map/enviroment
         long graphSeed = System.currentTimeMillis(); 
         Random rand = new Random(graphSeed);
 
-        // 3. Start JADE Runtime
+        //We start the JADE Runtime instance and show the JADE GUI
         Runtime rt = Runtime.instance();
         Profile p = new ProfileImpl();
-        p.setParameter(Profile.GUI, "true"); // Show the JADE GUI
+        p.setParameter(Profile.GUI, "true"); 
         ContainerController cc = rt.createMainContainer(p);
 
         try {
-            // 4. Create Agents Dynamically
+            //For each agent
             for (int i = 0; i < numAgents; i++) {
-                // Random start node for this agent (Source: [cite: 5])
+                //We set a random start node for the current agent
                 int startNode = rand.nextInt(numNodes);
                 
-                // Arguments passed to setup(): [Seed, MyID, NumNodes, TotalAgents, StartNode]
+                //Guarantee each agent makes the same env
                 Object[] agentArgs = new Object[]{
                     String.valueOf(graphSeed),
                     String.valueOf(numNodes),
@@ -48,7 +47,7 @@ public class LaunchMTSP {
                     String.valueOf(startNode) 
                 };
 
-                // Create and Start Agent
+                //Create and Start each Agent
                 AgentController ac = cc.createNewAgent("Salesman-" + i, "src.MyAgent", agentArgs);
                 ac.start();
             }
